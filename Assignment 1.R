@@ -5,6 +5,8 @@ library(zoo)
 library(countrycode)
 library(stringr)
 library(ggmap)
+library(rvest)
+library(gsubfn)
 
 # Read in the data
 
@@ -62,18 +64,64 @@ head(artist,n=11) # List the 10 artists with most paintings - 11 since no. 6 is 
 # Question 7: The variable ArtistBio lists the birth place of each painter. Use this information to create a world map
 #             where each country is colored according to the stock of paintings in MOMA's collection.
 
-# Make birthplace variable !!!!!!!!!!
+# Step 1: Find birthplace from the ArtistBio variable
 
-df$nat=word(df$ArtistBio,1)
-df$nat2=str_trim(str_replace_all(df$nat,"[, ( )]", " "))
+# Scenario 1: First word (nationality)
 
-world=      df %>%
-            group_by(word(nat2,1)) %>%
-            summarise(n=n())
+df$birth1 = as.character(str_trim(str_replace_all(word(df$ArtistBio,1),"[, ( )]", " ")))
+head(df$birth1)
 
-map_data=map_data("world")
+# Scenario 2: If born is followed by a country (prioritized)
 
-# Make map
+df$birth2 = as.character(str_trim(str_replace_all(strapply(df$ArtistBio,"born (.*)",simplify = TRUE),"[0-9 ( ) .]","")))
+head(df$birth2)
+
+# Step 2: Scraping a conversion table between country and nationality
+
+nat1 <- html("https://www.englishclub.com/vocabulary/world-countries-nationality.htm") %>%
+  html_nodes("td:nth-child(2)") %>%
+  html_text() %>% 
+  as.character()
+nat2 <- html("https://www.englishclub.com/vocabulary/world-countries-nationality.htm") %>%
+  html_nodes("td:nth-child(1)") %>%
+  html_text() %>% 
+  as.character()
+
+nat<-data.frame(nat2,nat1) # Conversion table
+names(nat)=c("birth3","birth1")
+head(nat)
+
+nat2=nat[!duplicated(nat[,2]),] # Removing duplicates in nationality, eg. Dutch meaning both Netherlands and Holland
+
+# Step 3: Use it to convert the nationality variable to countries
+
+df2 = left_join(df,nat2,by="birth1") 
+
+# Step 4: Combining into one varible and summarising
+
+df2$Birth_place = ifelse(is.na(df2$birth2) | df2$birth2=="NULL" | df2$birth2=="" ,
+                         as.character(df2$birth3),
+                         as.character(df2$birth2))
+
+Birth_place = df2 %>%
+              group_by(Birth_place) %>%
+              summarise(n=n())              # Can't figure our how to improve the names in R, e.g. all the differnt american.....
+
+# Step 6: Preparing for plot
+
+world = map_data("world")
+
+Birth_place$region = Birth_place$Birth_place
+
+world2=inner_join(world,Birth_place)
+
+# Step 7: PLotting
+
+p = ggplot(world2, aes(x = long, y = lat, group = group)) + 
+  geom_polygon(aes(fill = world2$n)) #+ scale_fill_gradient(trans = "log") + # Can be used to see the difference, and check that each vountry is actually represented
+  expand_limits() + 
+  theme_minimal()
+plot(p)
 
 
 # Question 8: The Dimensions variable lists the dimensions of each painting. Use your data manipulation skills to calculate
@@ -83,23 +131,23 @@ map_data=map_data("world")
 # Make two varibles from the dimesions -> muliply to area -> sort by area -> use head and tail functions to find largest and smallest 5
 
 df$test=substring(df$Dimensions,first=str_locate(pattern = '"',df$Dimensions)[,1]+1)
-df$test2=str_trim(str_replace_all(test,pattern = '[( cm  ")]', " "))
+df$test2=str_trim(str_replace_all(df$test,pattern = '[( cm  ")]', " "))
 head(df$test2)
 
 df$dim1=as.numeric(substring(df$test2,first=1,last=str_locate(df$test2,pattern="x")[,1]-1))
-head(df$dim1)
+head(df$dim1) # First dimension
 
 df$dim2=as.numeric(substring(df$test2,first=str_locate(df$test2,pattern="x")[,1]+1))
-head(dim2)
+head(df$dim2) # Second dimenstion
 
-df$area = df$dim1 * df$dim2
+df$area = df$dim1 * df$dim2 # Calculates area
 
-head(area)
+head(df$area)
 
-# Five largest
+# Dataframe with the five largest
 
 Largest = head(arrange(df,desc(area)),n=5)
 
-# Five smallest
+# Dataframe with the five smallest
 
 Smallest = head(arrange(df,area),n=5)
