@@ -53,75 +53,112 @@ p + labs(x='Time', y='Number of paintings in stock by department',title='Number 
 # Question 6: Write a piece of code that counts the number of paintings by each artist in the dataset.
 #             List the 10 painters with the highest number of paintings in MOMA's collection.
 
-artist =    df %>%
-            filter(!is.na(Artist),Artist!=' ') %>%  # Can't get the filter to take he observations with no artist away
-            group_by(Artist) %>%
-            summarise(n=n()) %>%
-            arrange(desc(n))
 
-head(artist,n=11) # List the 10 artists with most paintings - 11 since no. 6 is unknown artists
+artist =    df %>%
+  filter(!is.na(Artist),Artist!='Unknown photographer',Artist!='') %>%
+  group_by(Artist) %>%
+  summarise(n=n()) %>%
+  arrange(desc(n))
+
+head(artist,n=10)
 
 # Question 7: The variable ArtistBio lists the birth place of each painter. Use this information to create a world map
 #             where each country is colored according to the stock of paintings in MOMA's collection.
 
-# Step 1: Find birthplace from the ArtistBio variable
 
-# Scenario 1: First word (nationality)
 
-df$birth1 = as.character(str_trim(str_replace_all(word(df$ArtistBio,1),"[, ( )]", " ")))
-head(df$birth1)
+#Step 1: First we scrape adjectival names of countries from wikipedia
 
-# Scenario 2: If born is followed by a country (prioritized)
+url <- "https://en.wikipedia.org/wiki/List_of_adjectival_and_demonymic_forms_for_countries_and_nations"
+scrape <- url %>%
+  html() %>%
+  html_nodes(xpath='//*[@id="mw-content-text"]/table[1]') %>%
+  html_table(fill=TRUE)
+scrape <- scrape[[1]]
 
-df$birth2 = as.character(str_trim(str_replace_all(strapply(df$ArtistBio,"born (.*)",simplify = TRUE),"[0-9 ( ) .]","")))
-head(df$birth2)
+cn <- select(scrape, `Country name`, Adjectivals)
 
-# Step 2: Scraping a conversion table between country and nationality
+#Corrections to the scraped data are added
 
-nat1 <- html("https://www.englishclub.com/vocabulary/world-countries-nationality.htm") %>%
-  html_nodes("td:nth-child(2)") %>%
-  html_text() %>% 
-  as.character()
-nat2 <- html("https://www.englishclub.com/vocabulary/world-countries-nationality.htm") %>%
-  html_nodes("td:nth-child(1)") %>%
-  html_text() %>% 
-  as.character()
+cn$`Country name`[94] = "Great Britain"
+cn$`Country name`[115] = "Ireland"
+cn$`Country name`[119] = "Ivory Coast"
+cn$`Country name`[195] = "USSR"
+cn$`Country name`[251] = "United Kingdom"
+cn$`Country name`[252] = "United States"
 
-nat<-data.frame(nat2,nat1) # Conversion table
-names(nat)=c("birth3","birth1")
-head(nat)
+cn$`Country name` <- (str_split_fixed(cn$`Country name`, ",", n=3)[,1])
 
-nat2=nat[!duplicated(nat[,2]),] # Removing duplicates in nationality, eg. Dutch meaning both Netherlands and Holland
 
-# Step 3: Use it to convert the nationality variable to countries
+#Creating references
+cn$`Country name`[1] = "United States"
+cn$Adjectivals[1] = "U"
 
-df2 = left_join(df,nat2,by="birth1") 
+cn$`Country name`[2] = "South Africa"
+cn$Adjectivals[2] = "South"
 
-# Step 4: Combining into one varible and summarising
 
-df2$Birth_place = ifelse(is.na(df2$birth2) | df2$birth2=="NULL" | df2$birth2=="" ,
-                         as.character(df2$birth3),
-                         as.character(df2$birth2))
+cn$`Country name`[4] = "New Zealand"
+cn$Adjectivals[4] = "New"
 
-Birth_place = df2 %>%
-              group_by(Birth_place) %>%
-              summarise(n=n())              # Can't figure our how to improve the names in R, e.g. all the differnt american.....
+cn$`Country name`[11] = "Yugoslavia"
+cn$Adjectivals[4] = "Yugoslav"
 
-# Step 6: Preparing for plot
+cn$Adjectivals[85:87] ="nonamefrench"
+cn$Adjectivals[94] = "British"
+cn$Adjectivals[129] = "Korean"
+cn$Adjectivals[168] = "Dutch"
+cn$Adjectivals[169] = "newcaldonian"
+cn$Adjectivals[209] = "Scottish"
+
+
+cn$Adjectivals[222:224] ="nonamesouthies"
+cn$Adjectivals[252] = "American"
+
+cn$Adjectivals <- (str_split_fixed(cn$Adjectivals, ",", n=3)[,1])
+cn$Adjectivals <- (str_split_fixed(cn$Adjectivals, " or ", n=3)[,1])
+
+#Step 2:
+#We extract adjectivals from the artist bio. regex could be better - but I'm not completely familiar with it yet
+#Furthermore a charmatch() would be usefull, it is though not supported in my version of RStudio.
+
+df$Adjectivals <- str_extract(df$ArtistBio, "[A-Z][a-z]*")
+
+
+
+#-------------This could be used for having three options of matches, I just do not know how to combine them with left join------
+#cn$part1 <- (str_split_fixed(cn$Adjectivals, ",", n=3)[,1])
+#cn$part2 <- (str_split_fixed(cn$Adjectivals, ",", n=3)[,2])
+#cn$part3 <- (str_split_fixed(cn$Adjectivals, ",", n=3)[,3])
+
+
+#Step 3: Preparing for maps
+#Combining the two, we get something that can be read in maps.
+
+dfmaps <- left_join(df, cn, by = "Adjectivals")
+
+mapsum= dfmaps %>%
+  group_by(`Country name`) %>%
+  summarise(n=n()) 
 
 world = map_data("world")
 
-Birth_place$region = Birth_place$Birth_place
+mapsum$region = mapsum$`Country name`
 
-world2=inner_join(world,Birth_place)
 
-# Step 7: PLotting
+world2=inner_join(world,mapsum)
+
+#Step 4: Plot
 
 p = ggplot(world2, aes(x = long, y = lat, group = group)) + 
-  geom_polygon(aes(fill = world2$n)) #+ scale_fill_gradient(trans = "log") + # Can be used to see the difference, and check that each vountry is actually represented
+  geom_polygon(aes(fill = world2$n)) + scale_fill_gradient(trans = "log") + # Can be used to see the difference, and check that each vountry is actually represented
   expand_limits() + 
   theme_minimal()
 plot(p)
+
+#I think a better solution would be to have all countries plotted, as one country having 1 contribution isn't a lot different from 0.
+#I do not know how to do this in maps.
+
 
 
 # Question 8: The Dimensions variable lists the dimensions of each painting. Use your data manipulation skills to calculate
